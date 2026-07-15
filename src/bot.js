@@ -89,6 +89,24 @@ function normalizeToBaileysJid(jid) {
   return phone ? `${phone}@s.whatsapp.net` : value;
 }
 
+
+function normalizeWhatsAppText(text) {
+  let value = String(text == null ? '' : text);
+
+  // Textos vindos de migrations, variáveis ou formulários antigos podem ter
+  // sido persistidos com os caracteres literais \n e \r\n. O WhatsApp não
+  // interpreta essas sequências automaticamente, por isso normalizamos no
+  // ponto central de envio para proteger todos os fluxos e campanhas.
+  value = value
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n')
+    .replace(/\\t/g, ' ');
+
+  // Evita blocos gigantes por excesso acidental de linhas em branco.
+  return value.replace(/\n{4,}/g, '\n\n\n').trim();
+}
+
 function previewText(text, size = 100) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
   return value.length > size ? `${value.slice(0, size)}...` : value;
@@ -329,19 +347,20 @@ async function startBaileys() {
   client = {
     engine: 'baileys',
     sendText: async (jid, text) => {
+      const normalizedText = normalizeWhatsAppText(text);
       const target = normalizeToBaileysJid(jid);
       const timeoutMs = intEnv('WA_SEND_TIMEOUT_MS', 25000);
 
       try {
         const result = await withTimeout(
-          sock.sendMessage(target, { text }),
+          sock.sendMessage(target, { text: normalizedText }),
           timeoutMs,
           `Timeout ao enviar resposta para ${target} depois de ${timeoutMs}ms`
         );
 
         state.lastOutboundAt = new Date();
         state.lastOutboundTo = target;
-        state.lastOutboundPreview = previewText(text);
+        state.lastOutboundPreview = previewText(normalizedText);
         state.lastOutboundError = null;
         console.log(`[WhatsApp] Resposta enviada para ${target}: ${state.lastOutboundPreview}`);
         return result;

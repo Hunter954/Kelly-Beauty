@@ -105,5 +105,5 @@ INSERT INTO app_settings(key,value,is_secret) VALUES
  ('business_name','Kelly Rodrigues Beauty Studio',FALSE),('business_phone','45 99846-7053',FALSE),
  ('business_instagram','@kellylingerie_store',FALSE),('business_address','Av. Brasil, 665 — Galeria Edine — Sala 24',FALSE),
  ('timezone','America/Sao_Paulo',FALSE),('hold_minutes','5',FALSE),('max_future_days','60',FALSE),('min_notice_minutes','120',FALSE),
- ('welcome_message','Olá, seja bem-vinda à Kelly Rodrigues Beauty Studio! ✨\n\nComo podemos cuidar de você hoje?\n\n1️⃣ Agendar um serviço\n2️⃣ Ver nossos serviços\n3️⃣ Consultar meu agendamento\n4️⃣ Reagendar ou cancelar\n5️⃣ Endereço e contato\n6️⃣ Falar com uma atendente\n\nDigite o número da opção desejada.',FALSE)
+ ('welcome_message',E'Olá, seja bem-vinda à Kelly Rodrigues Beauty Studio! ✨\n\nComo podemos cuidar de você hoje?\n\n1️⃣ Agendar um serviço\n2️⃣ Ver nossos serviços\n3️⃣ Consultar meu agendamento\n4️⃣ Reagendar ou cancelar\n5️⃣ Endereço e contato\n6️⃣ Falar com uma atendente\n\nDigite o número da opção desejada.',FALSE)
 ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value;
