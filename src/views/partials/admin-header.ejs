@@ -1,12 +1,47 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kelly Beauty Studio</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"><link rel="stylesheet" href="/public/admin.css"></head>
-<body><aside class="sidebar" id="adminSidebar"><div class="sidebar-top"><div class="brand brand-with-logo"><% if(brandLogoUrl){ %><img src="<%= brandLogoUrl %>" alt="<%= businessName %>" class="brand-logo"><% }else{ %><div class="brand-placeholder">K</div><% } %><div><strong class="brand-full"><%= businessName || 'Kelly Beauty' %></strong><span>Rodrigues Beauty Studio</span></div></div></div><nav>
-<a href="/admin" class="<%= currentPath === '/admin' ? 'active' : '' %>"><i class="bi bi-grid-1x2-fill"></i><span>Visão geral</span></a>
-<a href="/admin/agenda" class="<%= currentPath === '/admin/agenda' ? 'active' : '' %>"><i class="bi bi-calendar-week"></i><span>Agenda</span></a>
-<a href="/admin/appointments" class="<%= currentPath === '/admin/appointments' ? 'active' : '' %>"><i class="bi bi-calendar-check"></i><span>Agendamentos</span></a>
-<a href="/admin/clients" class="<%= currentPath === '/admin/clients' ? 'active' : '' %>"><i class="bi bi-people-fill"></i><span>Clientes</span></a>
-<a href="/admin/support" class="<%= currentPath === '/admin/support' ? 'active' : '' %>"><i class="bi bi-chat-dots-fill"></i><span>Atendimento</span></a>
-<a href="/admin/services" class="<%= currentPath === '/admin/services' ? 'active' : '' %>"><i class="bi bi-stars"></i><span>Serviços</span></a>
-<a href="/admin/professionals" class="<%= currentPath === '/admin/professionals' ? 'active' : '' %>"><i class="bi bi-person-badge"></i><span>Profissionais</span></a>
-<a href="/admin/broadcast" class="<%= currentPath === '/admin/broadcast' ? 'active' : '' %>"><i class="bi bi-megaphone-fill"></i><span>Campanhas</span></a>
-<a href="/admin/settings" class="<%= currentPath === '/admin/settings' ? 'active' : '' %>"><i class="bi bi-gear-fill"></i><span>Configurações</span></a>
-<a href="/admin/qr" class="<%= currentPath === '/admin/qr' ? 'active' : '' %>"><i class="bi bi-whatsapp"></i><span>WhatsApp</span></a></nav><form method="post" action="/admin/logout"><button class="logout"><i class="bi bi-box-arrow-left"></i><span>Sair</span></button></form></aside><main class="main">
+<%
+  const safeCurrentPath = typeof currentPath !== 'undefined' && currentPath ? currentPath : '';
+  const safeBusinessName = typeof businessName !== 'undefined' && businessName ? businessName : 'Kelly Beauty';
+  const safeBrandLogoUrl = typeof brandLogoUrl !== 'undefined' && brandLogoUrl ? brandLogoUrl : '';
+%>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title><%= safeBusinessName %></title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/public/admin.css">
+</head>
+<body>
+<aside class="sidebar" id="adminSidebar">
+  <div class="sidebar-top">
+    <div class="brand brand-with-logo">
+      <% if (safeBrandLogoUrl) { %>
+        <img src="<%= safeBrandLogoUrl %>" alt="<%= safeBusinessName %>" class="brand-logo" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
+        <div class="brand-placeholder" style="display:none">K</div>
+      <% } else { %>
+        <div class="brand-placeholder">K</div>
+      <% } %>
+      <div>
+        <strong class="brand-full"><%= safeBusinessName %></strong>
+        <span>Rodrigues Beauty Studio</span>
+      </div>
+    </div>
+  </div>
+  <nav>
+    <a href="/admin" class="<%= safeCurrentPath === '/admin' ? 'active' : '' %>"><i class="bi bi-grid-1x2-fill"></i><span>Visão geral</span></a>
+    <a href="/admin/agenda" class="<%= safeCurrentPath === '/admin/agenda' ? 'active' : '' %>"><i class="bi bi-calendar-week"></i><span>Agenda</span></a>
+    <a href="/admin/appointments" class="<%= safeCurrentPath === '/admin/appointments' ? 'active' : '' %>"><i class="bi bi-calendar-check"></i><span>Agendamentos</span></a>
+    <a href="/admin/clients" class="<%= safeCurrentPath === '/admin/clients' ? 'active' : '' %>"><i class="bi bi-people-fill"></i><span>Clientes</span></a>
+    <a href="/admin/support" class="<%= safeCurrentPath === '/admin/support' ? 'active' : '' %>"><i class="bi bi-chat-dots-fill"></i><span>Atendimento</span></a>
+    <a href="/admin/services" class="<%= safeCurrentPath === '/admin/services' ? 'active' : '' %>"><i class="bi bi-stars"></i><span>Serviços</span></a>
+    <a href="/admin/professionals" class="<%= safeCurrentPath === '/admin/professionals' ? 'active' : '' %>"><i class="bi bi-person-badge"></i><span>Profissionais</span></a>
+    <a href="/admin/broadcast" class="<%= safeCurrentPath === '/admin/broadcast' ? 'active' : '' %>"><i class="bi bi-megaphone-fill"></i><span>Campanhas</span></a>
+    <a href="/admin/settings" class="<%= safeCurrentPath === '/admin/settings' ? 'active' : '' %>"><i class="bi bi-gear-fill"></i><span>Configurações</span></a>
+    <a href="/admin/qr" class="<%= safeCurrentPath === '/admin/qr' ? 'active' : '' %>"><i class="bi bi-whatsapp"></i><span>WhatsApp</span></a>
+  </nav>
+  <form method="post" action="/admin/logout">
+    <button class="logout"><i class="bi bi-box-arrow-left"></i><span>Sair</span></button>
+  </form>
+</aside>
+<main class="main">
