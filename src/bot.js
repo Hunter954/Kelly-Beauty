@@ -12,6 +12,7 @@ let baileysSocket = null;
 let baileysSaveCreds = null;
 const latestMessageByJid = new Map();
 const systemSentMessageIds = new Set();
+const archiveTimersByJid = new Map();
 
 const state = {
   enabled: String(process.env.ENABLE_WHATSAPP || 'true') === 'true',
@@ -89,45 +90,6 @@ function normalizeToBaileysJid(jid) {
 
   const phone = value.replace(/\D/g, '');
   return phone ? `${phone}@s.whatsapp.net` : value;
-}
-
-function isDirectChatJid(jid) {
-  const value = String(jid || '').trim().toLowerCase();
-  return Boolean(value) && !value.endsWith('@g.us') && value !== 'status@broadcast' && value !== 'status@broadcast';
-}
-
-function messageJidCandidates(message, fallbackJid = '') {
-  const values = [
-    message?.key?.remoteJidAlt,
-    message?.key?.remoteJid,
-    message?.key?.participantAlt,
-    fallbackJid
-  ];
-
-  const unique = [];
-  for (const value of values) {
-    const jid = normalizeToBaileysJid(value);
-    if (!isDirectChatJid(jid) || unique.includes(jid)) continue;
-    unique.push(jid);
-  }
-  return unique;
-}
-
-function publicJidFromMessage(message, fallbackJid = '') {
-  const candidates = messageJidCandidates(message, fallbackJid);
-  return candidates.find((jid) => /@(s\.whatsapp\.net|c\.us)$/i.test(jid)) || candidates[0] || normalizeToBaileysJid(fallbackJid);
-}
-
-function messageForChatTarget(message, targetJid) {
-  if (!message?.key || !targetJid) return message;
-  if (message.key.remoteJid === targetJid) return message;
-  return {
-    ...message,
-    key: {
-      ...message.key,
-      remoteJid: targetJid
-    }
-  };
 }
 
 
@@ -219,6 +181,10 @@ async function stopBot() {
     baileysSaveCreds = null;
     latestMessageByJid.clear();
     systemSentMessageIds.clear();
+    for (const timers of archiveTimersByJid.values()) {
+      for (const timer of timers) clearTimeout(timer);
+    }
+    archiveTimersByJid.clear();
     starting = false;
     backgroundPromise = null;
     state.ready = false;
@@ -429,60 +395,121 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function setChatArchived(jid, archived, lastMessage = null, options = {}) {
-  if (!baileysSocket) return false;
-  const target = normalizeToBaileysJid(jid);
-  if (!isDirectChatJid(target)) return false;
+function toMinimalLastMessage(message, targetJid = '') {
+  if (!message?.key?.id || message.messageTimestamp == null) return null;
+  return {
+    key: {
+      remoteJid: normalizeToBaileysJid(targetJid || message.key.remoteJid),
+      fromMe: Boolean(message.key.fromMe),
+      id: message.key.id,
+      ...(message.key.participant ? { participant: message.key.participant } : {})
+    },
+    messageTimestamp: message.messageTimestamp
+  };
+}
 
-  const storedRecent = latestMessageByJid.get(target);
-  const recent = messageForChatTarget(lastMessage || storedRecent, target);
-  const attempts = Math.max(1, Number(options.attempts || (archived ? 3 : 1)));
-  const retryDelayMs = Math.max(150, Number(options.retryDelayMs || 700));
+async function resolveChatJids(jid, rawMessage = null) {
+  const candidates = new Set();
+  const add = (value) => {
+    const normalized = normalizeToBaileysJid(value);
+    if (normalized && !normalized.endsWith('@g.us') && normalized !== 'status@broadcast') {
+      candidates.add(normalized);
+    }
+  };
 
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const activeSocket = baileysSocket;
-    if (!activeSocket) return false;
+  add(jid);
+  add(rawMessage?.key?.remoteJid);
+  add(rawMessage?.key?.remoteJidAlt);
+  add(rawMessage?.key?.participant);
+  add(rawMessage?.key?.participantAlt);
+  add(rawMessage?.key?.participantPn);
+  add(rawMessage?.key?.senderPn);
 
-    const modification = archived
-      ? { archive: true, ...(recent ? { lastMessages: [recent] } : {}) }
-      : { archive: false };
-
-    try {
-      await activeSocket.chatModify(modification, target);
-      console.log(`[WhatsApp] Chat ${archived ? 'arquivado' : 'desarquivado'}: ${target} (tentativa ${attempt}/${attempts})`);
-      if (attempt < attempts) await sleep(retryDelayMs);
-    } catch (error) {
-      if (attempt === attempts) {
-        console.warn(`[WhatsApp] Não foi possível ${archived ? 'arquivar' : 'desarquivar'} ${target}: ${error.message}`);
-        return false;
+  const mapping = baileysSocket?.signalRepository?.lidMapping;
+  if (mapping) {
+    for (const current of [...candidates]) {
+      try {
+        if (current.endsWith('@lid') && typeof mapping.getPNForLID === 'function') {
+          add(await mapping.getPNForLID(current));
+        } else if (current.endsWith('@s.whatsapp.net') && typeof mapping.getLIDForPN === 'function') {
+          add(await mapping.getLIDForPN(current));
+        }
+      } catch (error) {
+        console.warn(`[WhatsApp] Falha ao resolver alias de ${current}: ${error.message}`);
       }
-      await sleep(retryDelayMs);
     }
   }
 
-  return true;
+  return [...candidates];
 }
 
-async function setMessageChatArchived(message, archived, options = {}) {
-  const candidates = messageJidCandidates(message, message?.key?.remoteJid);
-  if (!candidates.length) return false;
+async function applyChatArchive(jid, archived, lastMessage = null) {
+  const activeSocket = baileysSocket;
+  if (!activeSocket) return false;
 
-  let succeeded = false;
-  for (const jid of candidates) {
-    latestMessageByJid.set(jid, messageForChatTarget(message, jid));
-    const changed = await setChatArchived(jid, archived, message, options);
-    succeeded = changed || succeeded;
+  const minimal = toMinimalLastMessage(lastMessage || latestMessageByJid.get(jid), jid);
+  if (!minimal) {
+    console.warn(`[WhatsApp] Arquivamento ignorado para ${jid}: última mensagem sem id/timestamp.`);
+    return false;
   }
-  return succeeded;
+
+  try {
+    await activeSocket.chatModify({ archive: Boolean(archived), lastMessages: [minimal] }, jid);
+    console.log(`[WhatsApp] Chat ${archived ? 'arquivado' : 'desarquivado'} com sucesso: ${jid} (${minimal.key.id})`);
+    return true;
+  } catch (error) {
+    console.warn(`[WhatsApp] Falha ao ${archived ? 'arquivar' : 'desarquivar'} ${jid}: ${error.message}`);
+    return false;
+  }
 }
 
-function scheduleMessageChatArchive(message, archived, delays = [1800, 4500]) {
-  for (const delay of delays) {
-    setTimeout(() => {
-      setMessageChatArchived(message, archived, { attempts: 1 })
-        .catch((error) => console.warn(`[WhatsApp] Falha no reforço tardio de arquivamento: ${error.message}`));
-    }, Math.max(0, Number(delay) || 0));
+function clearArchiveTimers(jid) {
+  const timers = archiveTimersByJid.get(jid) || [];
+  for (const timer of timers) clearTimeout(timer);
+  archiveTimersByJid.delete(jid);
+}
+
+async function setChatArchived(jid, archived, lastMessage = null, options = {}) {
+  if (!baileysSocket) return false;
+
+  const targets = await resolveChatJids(jid, lastMessage);
+  if (!targets.length) return false;
+
+  for (const target of targets) {
+    if (lastMessage) latestMessageByJid.set(target, lastMessage);
+    clearArchiveTimers(target);
   }
+
+  const immediateResults = await Promise.all(
+    targets.map((target) => applyChatArchive(target, archived, lastMessage))
+  );
+
+  // Em chats novos o telefone principal recebe a atualização da mensagem depois
+  // do companion. Reaplicamos em janelas realmente posteriores à sincronização,
+  // sempre usando a mensagem mais recente (normalmente a resposta do próprio bot).
+  if (archived && options.schedule !== false) {
+    const delays = Array.isArray(options.delays)
+      ? options.delays
+      : [2000, 8000, 20000];
+
+    for (const target of targets) {
+      const timers = delays.map((delay) => setTimeout(async () => {
+        try {
+          const user = await db.getUserByJid(target).catch(() => null);
+          if (user?.support_status === 'open') {
+            clearArchiveTimers(target);
+            return;
+          }
+          await applyChatArchive(target, true, latestMessageByJid.get(target) || lastMessage);
+        } catch (error) {
+          console.warn(`[WhatsApp] Reforço de arquivamento falhou para ${target}: ${error.message}`);
+        }
+      }, Math.max(500, Number(delay) || 0)));
+      archiveTimersByJid.set(target, timers);
+    }
+  }
+
+  return immediateResults.some(Boolean);
 }
 
 async function startBaileys() {
@@ -602,19 +629,15 @@ async function startBaileys() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     for (const msg of messages || []) {
       try {
-        const rawFrom = msg.key?.remoteJid;
-        const from = publicJidFromMessage(msg, rawFrom);
-        const jidCandidates = messageJidCandidates(msg, rawFrom);
+        const from = msg.key?.remoteJid;
         const body = getMessageBody(msg);
         const fromMe = Boolean(msg.key?.fromMe);
         const phone = extractPhoneFromRawMessage(msg, from);
-        const isGroup = String(rawFrom || '').endsWith('@g.us');
-        const isStatus = String(rawFrom || '') === 'status@broadcast';
+        const isGroup = String(from || '').endsWith('@g.us');
+        const isStatus = String(from || '') === 'status@broadcast';
 
-        if (!rawFrom || !from || isGroup || isStatus) continue;
-        for (const jid of jidCandidates) {
-          latestMessageByJid.set(jid, messageForChatTarget(msg, jid));
-        }
+        if (!from || isGroup || isStatus) continue;
+        latestMessageByJid.set(normalizeToBaileysJid(from), msg);
 
         if (fromMe) {
           const sentId = msg.key?.id;
@@ -649,19 +672,9 @@ async function startBaileys() {
         // O WhatsApp normalmente desarquiva um chat assim que chega uma mensagem.
         // Para as conversas automáticas, revertemos isso imediatamente, antes mesmo
         // de executar o fluxo do bot. Chats em suporte humano permanecem visíveis.
-        let userBeforeFlow = await db.getUserByJid(from).catch(() => null);
-        if (!userBeforeFlow) {
-          for (const candidate of jidCandidates) {
-            userBeforeFlow = await db.getUserByJid(candidate).catch(() => null);
-            if (userBeforeFlow) break;
-          }
-        }
+        const userBeforeFlow = await db.getUserByJid(from).catch(() => null);
         const supportWasOpen = userBeforeFlow?.support_status === 'open';
-        await setMessageChatArchived(msg, !supportWasOpen, {
-          attempts: supportWasOpen ? 1 : 2,
-          retryDelayMs: 350
-        });
-        if (!supportWasOpen) scheduleMessageChatArchive(msg, true);
+        await setChatArchived(from, !supportWasOpen, msg, { schedule: !supportWasOpen });
 
         const normalizedMessage = {
           from,
@@ -679,11 +692,7 @@ async function startBaileys() {
         // tardia do aplicativo que costuma trazer o chat de volta à lista principal.
         const currentUser = await db.getUserByJid(from);
         const keepArchived = currentUser?.support_status !== 'open';
-        await setMessageChatArchived(msg, keepArchived, {
-          attempts: keepArchived ? 3 : 1,
-          retryDelayMs: 800
-        });
-        if (keepArchived) scheduleMessageChatArchive(msg, true, [2200, 6000]);
+        await setChatArchived(from, keepArchived, latestMessageByJid.get(normalizeToBaileysJid(from)) || msg, { schedule: keepArchived });
       } catch (error) {
         console.error('Erro no fluxo do bot:', error);
       }
