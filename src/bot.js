@@ -386,25 +386,42 @@ async function setSupportStateFromPhone(sock, command, selfJid) {
   return true;
 }
 
-async function setChatArchived(jid, archived, lastMessage = null) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function setChatArchived(jid, archived, lastMessage = null, options = {}) {
   if (!baileysSocket) return false;
   const target = normalizeToBaileysJid(jid);
   if (!target || target.endsWith('@g.us') || target === 'status@broadcast') return false;
 
   const recent = lastMessage || latestMessageByJid.get(target);
-  const modification = archived
-    ? { archive: true, ...(recent ? { lastMessages: [recent] } : {}) }
-    : { archive: false };
+  const attempts = Math.max(1, Number(options.attempts || (archived ? 3 : 1)));
+  const retryDelayMs = Math.max(150, Number(options.retryDelayMs || 700));
 
-  try {
-    await baileysSocket.chatModify(modification, target);
-    return true;
-  } catch (error) {
-    // Algumas versões exigem a última mensagem para arquivar. Não derruba o bot
-    // caso o WhatsApp ainda não tenha sincronizado esse chat na sessão atual.
-    console.warn(`[WhatsApp] Não foi possível ${archived ? 'arquivar' : 'desarquivar'} ${target}: ${error.message}`);
-    return false;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const activeSocket = baileysSocket;
+    if (!activeSocket) return false;
+
+    const modification = archived
+      ? { archive: true, ...(recent ? { lastMessages: [recent] } : {}) }
+      : { archive: false };
+
+    try {
+      await activeSocket.chatModify(modification, target);
+      if (attempt < attempts) await sleep(retryDelayMs);
+    } catch (error) {
+      if (attempt === attempts) {
+        // Algumas versões exigem a última mensagem para arquivar. Não derruba o bot
+        // caso o WhatsApp ainda não tenha sincronizado esse chat na sessão atual.
+        console.warn(`[WhatsApp] Não foi possível ${archived ? 'arquivar' : 'desarquivar'} ${target}: ${error.message}`);
+        return false;
+      }
+      await sleep(retryDelayMs);
+    }
   }
+
+  return true;
 }
 
 async function startBaileys() {
@@ -564,6 +581,16 @@ async function startBaileys() {
         state.lastInboundPreview = body ? String(body).slice(0, 80) : '[mensagem sem texto]';
         console.log(`[WhatsApp] Mensagem recebida (${type || 'sem tipo'}) de ${from}: ${state.lastInboundPreview}`);
 
+        // O WhatsApp normalmente desarquiva um chat assim que chega uma mensagem.
+        // Para as conversas automáticas, revertemos isso imediatamente, antes mesmo
+        // de executar o fluxo do bot. Chats em suporte humano permanecem visíveis.
+        const userBeforeFlow = await db.getUserByJid(from).catch(() => null);
+        const supportWasOpen = userBeforeFlow?.support_status === 'open';
+        await setChatArchived(from, !supportWasOpen, msg, {
+          attempts: supportWasOpen ? 1 : 2,
+          retryDelayMs: 350
+        });
+
         const normalizedMessage = {
           from,
           phone,
@@ -575,8 +602,15 @@ async function startBaileys() {
         };
         await handleIncomingMessage(client, normalizedMessage);
 
+        // Reconsulta porque o próprio fluxo pode abrir o suporte humano. Se não
+        // abriu, reforça o arquivamento após as respostas para vencer a atualização
+        // tardia do aplicativo que costuma trazer o chat de volta à lista principal.
         const currentUser = await db.getUserByJid(from);
-        await setChatArchived(from, currentUser?.support_status !== 'open', msg);
+        const keepArchived = currentUser?.support_status !== 'open';
+        await setChatArchived(from, keepArchived, msg, {
+          attempts: keepArchived ? 3 : 1,
+          retryDelayMs: 800
+        });
       } catch (error) {
         console.error('Erro no fluxo do bot:', error);
       }
