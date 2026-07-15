@@ -451,15 +451,27 @@ ${emojiNumber(updatedSlots.length + 1)} Escolher outra data`,
       );
     } catch (error) {
       console.error('Erro ao confirmar agendamento pelo WhatsApp:', error);
-      const dates = await appt.nextDates(data.serviceId, data.professionalId);
-      await updateUser(user.id, {
-        onboarding_step: 'booking_date',
-        onboarding_data: { ...data, dates, slots: undefined, startsAt: undefined }
-      });
+
+      if (error?.code === 'SLOT_UNAVAILABLE') {
+        const dates = await appt.nextDates(data.serviceId, data.professionalId);
+        await updateUser(user.id, {
+          onboarding_step: 'booking_date',
+          onboarding_data: { ...data, dates, slots: undefined, startsAt: undefined }
+        });
+        return send(
+          client,
+          jid,
+          `Esse horário realmente não está mais disponível. Escolha uma nova data:
+
+${numbered(dates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}`,
+          user.id
+        );
+      }
+
       return send(
         client,
         jid,
-        `Esse horário acabou de ficar indisponível. Escolha uma nova data:\n\n${numbered(dates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}`,
+        'Não consegui concluir o agendamento por uma falha momentânea do sistema. Seu horário continua selecionado. Digite *1* para tentar confirmar novamente, *2* para escolher outro horário ou *3* para voltar ao menu.',
         user.id
       );
     }

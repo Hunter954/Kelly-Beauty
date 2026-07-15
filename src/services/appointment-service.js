@@ -4,6 +4,12 @@ const { getPool, query } = require('../db');
 const ACTIVE_STATUSES = "('pending','confirmed','rescheduled','in_progress')";
 const DEFAULT_HOLD_MINUTES = 5;
 
+function bookingError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 function code() {
   return `KR-${crypto.randomInt(1000, 9999)}${crypto.randomBytes(1).toString('hex').toUpperCase()}`;
 }
@@ -129,7 +135,7 @@ async function holdSlot(data) {
         WHERE professional_id=$1 AND expires_at>NOW() AND starts_at<$3 AND ends_at>$2 AND client_id<>$4
       LIMIT 1`, [data.professionalId, start, end, data.clientId]);
 
-    if (conflict.rowCount) throw new Error('Horário indisponível.');
+    if (conflict.rowCount) throw bookingError('Horário indisponível.', 'SLOT_UNAVAILABLE');
 
     const setting = (await client.query("SELECT value FROM app_settings WHERE key='hold_minutes' LIMIT 1")).rows[0];
     const holdMinutes = normalizeHoldMinutes(setting?.value);
@@ -171,14 +177,12 @@ async function createAppointment(data) {
       SELECT 1 FROM appointment_holds
         WHERE professional_id=$1 AND expires_at>NOW() AND starts_at<$3 AND ends_at>$2 AND client_id<>$4
       LIMIT 1`, [data.professionalId, start, end, data.clientId]);
-    if (conflict.rowCount) throw new Error('Horário indisponível.');
+    if (conflict.rowCount) throw bookingError('Horário indisponível.', 'SLOT_UNAVAILABLE');
 
-    const ownHold = await client.query(`SELECT 1 FROM appointment_holds
-      WHERE client_id=$1 AND service_id=$2 AND professional_id=$3
-        AND starts_at=$4 AND ends_at=$5 AND expires_at>NOW()
-      LIMIT 1`, [data.clientId, data.serviceId, data.professionalId, start, end]);
-    if (!ownHold.rowCount) throw new Error('A reserva temporária expirou.');
-
+    // O hold melhora a experiência enquanto o cliente confirma, mas não pode ser
+    // uma condição obrigatória: ele pode expirar ou sofrer diferença de precisão
+    // entre a sessão e o PostgreSQL. A trava por profissional + a consulta acima
+    // são a garantia real e atômica contra agendamentos duplicados.
     const publicCode = code();
     const result = await client.query(`INSERT INTO appointments
       (public_code,client_id,service_id,professional_id,starts_at,ends_at,duration_minutes,buffer_minutes,status,original_price_cents,final_price_cents,origin,created_by,last_changed_by)
