@@ -59,3 +59,20 @@ No painel **Serviços**, preencha duração, intervalo e preço dos serviços. S
 ## Limitações conhecidas desta entrega
 
 A primeira versão prioriza o fluxo confiável de agendamento, agenda diária, cadastro de clientes, serviços e atendimento humano. Reagendamento e cancelamento pelo WhatsApp são encaminhados ao atendimento humano; lembretes, lista de espera, relatórios avançados, fidelidade e edição visual completa de horários possuem estrutura de banco preparada, mas exigem a camada operacional adicional.
+
+
+## PostgreSQL e volume persistente (correção 3.0.1)
+
+No serviço da aplicação, não digite manualmente usuário e senha do PostgreSQL. Crie a referência:
+
+```env
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+SESSION_SECRET=troque-por-uma-chave-longa-e-aleatoria
+STORAGE_PATH=/data
+WA_SESSION_DATA_PATH=/data/whatsapp
+```
+
+Substitua `Postgres` pelo nome exato do serviço de banco no canvas do Railway.
+Remova variáveis `DATABASE_URL`, `PGUSER` ou `PGPASSWORD` antigas que tenham credenciais digitadas manualmente e estejam incorretas.
+
+Crie um Volume no serviço da aplicação e monte em `/data`. Ele será usado para logomarcas, outros uploads e fallback local da sessão do WhatsApp. O banco PostgreSQL continua sendo a fonte principal dos dados.

@@ -4,38 +4,50 @@ const { Pool } = require('pg');
 
 let pool = null;
 let poolError = null;
+let poolCandidateIndex = 0;
+let activeConnectionSource = null;
 let whatsappAuthTableReady = false;
 
-function buildConnectionStringFromPgVars() {
-  const host = process.env.PGHOST;
-  const port = process.env.PGPORT || '5432';
-  const user = process.env.PGUSER;
-  const password = process.env.PGPASSWORD || '';
-  const database = process.env.PGDATABASE;
+function cleanValue(value) {
+  const text = String(value || '').trim();
+  if (!text || text.includes('${{')) return '';
+  return text;
+}
 
+function buildConnectionStringFromVars(prefix, names) {
+  const host = cleanValue(process.env[names.host]);
+  const port = cleanValue(process.env[names.port]) || '5432';
+  const user = cleanValue(process.env[names.user]);
+  const password = cleanValue(process.env[names.password]);
+  const database = cleanValue(process.env[names.database]);
   if (!host || !user || !database) return null;
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
+}
 
-  const auth = `${encodeURIComponent(user)}:${encodeURIComponent(password)}`;
-  return `postgresql://${auth}@${host}:${port}/${encodeURIComponent(database)}`;
+function connectionCandidates() {
+  const candidates = [
+    ['DATABASE_URL', cleanValue(process.env.DATABASE_URL)],
+    ['DATABASE_PRIVATE_URL', cleanValue(process.env.DATABASE_PRIVATE_URL)],
+    ['POSTGRES_URL', cleanValue(process.env.POSTGRES_URL)],
+    ['POSTGRES_DATABASE_URL', cleanValue(process.env.POSTGRES_DATABASE_URL)],
+    ['DATABASE_PUBLIC_URL', cleanValue(process.env.DATABASE_PUBLIC_URL)],
+    ['PG*', buildConnectionStringFromVars('PG', { host:'PGHOST', port:'PGPORT', user:'PGUSER', password:'PGPASSWORD', database:'PGDATABASE' })],
+    ['POSTGRES*', buildConnectionStringFromVars('POSTGRES', { host:'POSTGRES_HOST', port:'POSTGRES_PORT', user:'POSTGRES_USER', password:'POSTGRES_PASSWORD', database:'POSTGRES_DB' })]
+  ].filter(([, value]) => value);
+  const seen = new Set();
+  return candidates.filter(([, value]) => seen.has(value) ? false : (seen.add(value), true));
 }
 
 function resolveConnectionString() {
-  return (
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    process.env.POSTGRES_DATABASE_URL ||
-    process.env.DATABASE_PRIVATE_URL ||
-    process.env.DATABASE_PUBLIC_URL ||
-    buildConnectionStringFromPgVars()
-  );
+  return connectionCandidates()[0]?.[1] || null;
 }
 
 function databaseMissingMessage() {
   return [
     'Banco PostgreSQL não configurado.',
-    'No Railway, adicione um serviço PostgreSQL e crie no serviço do app:',
+    'No serviço da aplicação no Railway, crie a variável:',
     'DATABASE_URL=${{Postgres.DATABASE_URL}}',
-    'Se seu banco tiver outro nome no canvas, troque "Postgres" pelo nome exato do serviço.'
+    'Troque Postgres pelo nome exato do serviço PostgreSQL no seu projeto.'
   ].join('\n');
 }
 
@@ -45,46 +57,89 @@ function sslConfig(connectionString) {
   return sslRequested ? { rejectUnauthorized: false } : false;
 }
 
-function getPool() {
-  if (pool) return pool;
+function closeCurrentPool() {
+  const current = pool;
+  pool = null;
+  if (current) current.end().catch(() => {});
+}
 
-  const connectionString = resolveConnectionString();
-  if (!connectionString) {
-    poolError = new Error(databaseMissingMessage());
-    throw poolError;
-  }
-
-  pool = new Pool({
+function createPool(candidateIndex = 0) {
+  const candidates = connectionCandidates();
+  if (!candidates.length) throw new Error(databaseMissingMessage());
+  poolCandidateIndex = Math.min(candidateIndex, candidates.length - 1);
+  const [source, connectionString] = candidates[poolCandidateIndex];
+  activeConnectionSource = source;
+  const created = new Pool({
     connectionString,
     ssl: sslConfig(connectionString),
     max: Number(process.env.PG_POOL_MAX || 10),
     idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000),
     connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT_MS || 10000)
   });
-
-  pool.on('error', (error) => {
+  created.on('error', (error) => {
     poolError = error;
     console.error('Erro inesperado no pool PostgreSQL:', error.message);
   });
+  return created;
+}
 
+function getPool() {
+  if (!pool) pool = createPool(poolCandidateIndex);
   return pool;
 }
 
-function getSessionPool() {
-  // Mantido separado para o servidor poder cair para sessão em memória sem derrubar o app.
-  return getPool();
+function getSessionPool() { return getPool(); }
+
+function isRetryableConnectionError(error) {
+  return ['28P01','3D000','ECONNREFUSED','ENOTFOUND','ETIMEDOUT','ECONNRESET'].includes(error?.code);
+}
+
+async function query(text, params = []) {
+  const candidates = connectionCandidates();
+  let lastError;
+  for (let attempt = 0; attempt < Math.max(candidates.length, 1); attempt += 1) {
+    try {
+      const result = await getPool().query(text, params);
+      poolError = null;
+      return result;
+    } catch (error) {
+      lastError = error;
+      poolError = error;
+      const nextIndex = poolCandidateIndex + 1;
+      if (!isRetryableConnectionError(error) || nextIndex >= candidates.length) throw error;
+      console.warn(`Conexão PostgreSQL por ${activeConnectionSource} falhou. Tentando ${candidates[nextIndex][0]}.`);
+      closeCurrentPool();
+      poolCandidateIndex = nextIndex;
+    }
+  }
+  throw lastError;
+}
+
+function safeDatabaseTarget() {
+  try {
+    const url = new URL(connectionCandidates()[poolCandidateIndex]?.[1] || resolveConnectionString());
+    return `${url.hostname}:${url.port || '5432'}/${url.pathname.replace(/^\//, '')}`;
+  } catch (_) { return null; }
 }
 
 function getDatabaseStatus() {
   return {
-    configured: Boolean(resolveConnectionString()),
+    configured: connectionCandidates().length > 0,
+    candidateCount: connectionCandidates().length,
+    activeSource: activeConnectionSource || connectionCandidates()[0]?.[0] || null,
+    target: safeDatabaseTarget(),
     poolCreated: Boolean(pool),
-    lastError: poolError ? poolError.message : null
+    lastError: poolError ? poolError.message : null,
+    errorCode: poolError?.code || null
   };
 }
 
-async function query(text, params = []) {
-  return getPool().query(text, params);
+function friendlyDatabaseError(error) {
+  if (error?.code === '28P01') return 'O PostgreSQL recusou o usuário ou a senha. No Railway, remova DATABASE_URL preenchida manualmente e use a referência ${{Postgres.DATABASE_URL}}.';
+  if (error?.code === '3D000') return 'O nome do banco PostgreSQL está incorreto. Use a variável DATABASE_URL fornecida pelo serviço PostgreSQL.';
+  if (['ECONNREFUSED','ENOTFOUND','ETIMEDOUT'].includes(error?.code)) return 'Não foi possível alcançar o PostgreSQL. Confira se o serviço está ativo e se DATABASE_URL referencia o serviço correto.';
+  if (/Banco PostgreSQL não configurado/i.test(error?.message || '')) return databaseMissingMessage();
+  return 'Não foi possível acessar o PostgreSQL. Confira DATABASE_URL nas variáveis do serviço da aplicação.';
 }
 
 async function runMigrations() {
@@ -101,7 +156,6 @@ async function runMigrations() {
   for (const file of files) {
     const already = await query('SELECT 1 FROM app_migrations WHERE filename = $1', [file]);
     if (already.rowCount > 0) continue;
-
     const sql = fs.readFileSync(path.join(migrationDir, file), 'utf8');
     const client = await getPool().connect();
     try {
@@ -113,9 +167,7 @@ async function runMigrations() {
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
-    } finally {
-      client.release();
-    }
+    } finally { client.release(); }
   }
 }
 
@@ -464,7 +516,7 @@ async function closePool() {
 module.exports = {
   getPool,
   getSessionPool,
-  getDatabaseStatus,
+  getDatabaseStatus, friendlyDatabaseError,
   query,
   runMigrations,
   closePool,

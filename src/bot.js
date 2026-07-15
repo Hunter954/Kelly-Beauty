@@ -3,6 +3,7 @@ const path = require('path');
 const { Boom } = require('@hapi/boom');
 const { handleIncomingMessage } = require('./flows');
 const db = require('./db');
+const storage = require('./storage');
 
 let client = null;
 let starting = false;
@@ -44,9 +45,12 @@ function intEnv(name, fallback) {
 }
 
 function sessionBaseDir() {
-  const custom = process.env.WA_SESSION_DATA_PATH || '';
-  return custom ? path.resolve(process.cwd(), custom) : process.cwd();
+  const custom = String(process.env.WA_SESSION_DATA_PATH || '').trim();
+  if (custom) return path.resolve(custom);
+  storage.ensureStorageDirectories();
+  return storage.whatsapp;
 }
+
 
 async function removeIfExists(target) {
   try {

@@ -1,8 +1,22 @@
 const express = require('express');
+const path = require('path');
+const multer = require('multer');
+const storagePaths = require('../storage');
 const { getBotState, startBotInBackground, stopBot, cleanSessionArtifacts, sendText } = require('../bot');
-const { getPool, query, logMessage, updateUser, formatPhoneForAdmin } = require('../db');
+const { getPool, getDatabaseStatus, friendlyDatabaseError, query, logMessage, updateUser, formatPhoneForAdmin } = require('../db');
 const config = require('../config');
 const router = express.Router();
+
+storagePaths.ensureStorageDirectories();
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, storagePaths.uploads),
+    filename: (_req, file, cb) => cb(null, `logo-${Date.now()}${path.extname(file.originalname || '').toLowerCase()}`)
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, ['image/png','image/jpeg','image/webp','image/svg+xml'].includes(file.mimetype))
+});
+
 
 function requireAuth(req, res, next) { return req.session?.adminLoggedIn ? next() : res.redirect('/admin/login'); }
 function safeReturn(value, fallback='/admin') { return String(value || '').startsWith('/admin') ? value : fallback; }
@@ -17,8 +31,8 @@ router.use(async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.get('/setup', (req, res) => res.render('admin/setup', { error: null }));
-router.post('/setup', async (req, res, next) => {
+router.get('/setup', (req, res) => res.render('admin/setup', { error: null, database: getDatabaseStatus() }));
+router.post('/setup', async (req, res) => {
   try {
     const ready = await config.isSetupComplete();
     if (ready) return res.redirect('/admin/login');
@@ -26,21 +40,23 @@ router.post('/setup', async (req, res, next) => {
     const password = String(req.body.password || '');
     const confirm = String(req.body.confirm_password || '');
     if (username.length < 3 || password.length < 8 || password !== confirm) {
-      return res.status(400).render('admin/setup', { error: 'Use um usuário com 3 caracteres, senha com pelo menos 8 caracteres e confirme corretamente.' });
+      return res.status(400).render('admin/setup', { error: 'Use um usuário com 3 caracteres, senha com pelo menos 8 caracteres e confirme corretamente.', database: getDatabaseStatus() });
     }
     await config.setMany({
       admin_user: username,
       admin_password_hash: config.hashPassword(password),
-      product_name: String(req.body.product_name || 'Mentoria REIVILO').trim(),
-      price_brl: String(req.body.price_brl || '997,00').trim(),
-      site_url: String(req.body.site_url || 'https://www.reivilo.com.br').trim(),
-      group_jid: String(req.body.group_jid || '').trim(),
-      group_invite_link: String(req.body.group_invite_link || '').trim()
+      business_name: 'Kelly Rodrigues Beauty Studio',
+      business_phone: '45 99846-7053',
+      business_instagram: '@kellylingerie_store',
+      business_address: 'Av. Brasil, 665 — Galeria Edine — Sala 24'
     }, ['admin_password_hash']);
     req.session.adminLoggedIn = true;
     req.session.adminUser = username;
     res.redirect('/admin/settings');
-  } catch (error) { next(error); }
+  } catch (error) {
+    console.error('Falha na configuração inicial:', error.message);
+    return res.status(503).render('admin/setup', { error: friendlyDatabaseError(error), database: getDatabaseStatus() });
+  }
 });
 
 router.get('/login', (req, res) => res.render('admin/login', { error: null }));
@@ -58,14 +74,15 @@ router.post('/logout', requireAuth, (req, res) => req.session.destroy(() => res.
 
 router.get('/settings', requireAuth, async (req, res, next) => {
   try {
-    const settings = await config.getMany(['admin_user','business_name','business_phone','business_instagram','business_address','welcome_message']);
+    const settings = await config.getMany(['admin_user','business_name','business_phone','business_instagram','business_address','business_logo_url','welcome_message']);
     res.render('admin/settings', { settings, saved: req.query.saved === '1' });
   } catch (error) { next(error); }
 });
-router.post('/settings', requireAuth, async (req, res, next) => {
+router.post('/settings', requireAuth, upload.single('business_logo'), async (req, res, next) => {
   try {
     const values = {};
     for (const key of ['admin_user','business_name','business_phone','business_instagram','business_address','welcome_message']) values[key] = String(req.body[key] || '').trim();
+    if (req.file) values.business_logo_url = `/uploads/${req.file.filename}`;
     await config.setMany(values);
     const newPassword = String(req.body.new_password || '');
     if (newPassword) {

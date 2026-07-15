@@ -7,6 +7,8 @@ const helmet = require('helmet');
 const path = require('path');
 const crypto = require('crypto');
 const db = require('./db');
+const storage = require('./storage');
+storage.ensureStorageDirectories();
 const { startBotInBackground, getBotState } = require('./bot');
 
 const adminRoutes = require('./routes/admin');
@@ -33,12 +35,8 @@ function normalizePort(value) {
 }
 
 function portsToListen() {
-  // Railway normalmente injeta PORT. Também escutamos 3000 e 8080 para sobreviver
-  // quando PORT foi criado manualmente ou quando o proxy espera a porta comum do Docker.
-  const candidates = [process.env.PORT, 3000, 8080]
-    .map(normalizePort)
-    .filter(Boolean);
-  return [...new Set(candidates)];
+  const configured = normalizePort(process.env.PORT);
+  return [configured || 3000];
 }
 
 function buildSessionConfig() {
@@ -113,6 +111,7 @@ app.use((req, res, next) => {
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use('/public', express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
+app.use('/uploads', express.static(storage.uploads, { maxAge: '1d', fallthrough: true }));
 
 app.use(session(buildSessionConfig()));
 
