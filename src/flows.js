@@ -38,8 +38,17 @@ async function menu(name) {
     .replace(/seja bem-vindo/gi, expression);
 }
 
+function emojiNumber(value) {
+  return String(value).split('').map((digit) => `${digit}\uFE0F\u20E3`).join('');
+}
+
+function parseOption(value) {
+  const digits = String(value || '').replace(/[\uFE0F\u20E3\s]/g, '');
+  return /^\d+$/.test(digits) ? Number(digits) : Number.NaN;
+}
+
 function numbered(items, label) {
-  return items.map((item, index) => `${index + 1}️⃣ ${label(item)}`).join('\n');
+  return items.map((item, index) => `${emojiNumber(index + 1)} ${label(item)}`).join('\n');
 }
 
 function isBookingStep(step) {
@@ -54,6 +63,7 @@ function isBookingStep(step) {
 }
 
 async function reset(user, step = 'main_menu') {
+  await appt.releaseHolds(user.id);
   return updateUser(user.id, { onboarding_step: step, onboarding_data: {} });
 }
 
@@ -89,7 +99,7 @@ async function startBooking(client, jid, user) {
   return send(
     client,
     jid,
-    `Escolha uma categoria:\n\n${numbered(categories, (item) => item.name)}\n${categories.length + 1}️⃣ Voltar ao menu`,
+    `Escolha uma categoria:\n\n${numbered(categories, (item) => item.name)}\n${emojiNumber(categories.length + 1)} Voltar ao menu`,
     user.id
   );
 }
@@ -104,7 +114,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
 
   if (user.onboarding_step === 'booking_category') {
     const categories = await appt.listCategories();
-    const option = Number(normalized);
+    const option = parseOption(normalized);
 
     if (option === categories.length + 1) {
       await reset(user);
@@ -132,14 +142,14 @@ async function handleBookingStep(client, jid, text, normalized, user) {
     return send(
       client,
       jid,
-      `Qual serviço você deseja?\n\n${numbered(services, (item) => item.name)}\n${services.length + 1}️⃣ Voltar às categorias`,
+      `Qual serviço você deseja?\n\n${numbered(services, (item) => item.name)}\n${emojiNumber(services.length + 1)} Voltar às categorias`,
       user.id
     );
   }
 
   if (user.onboarding_step === 'booking_service') {
     const services = await appt.listServices(data.categoryId);
-    const option = Number(normalized);
+    const option = parseOption(normalized);
 
     if (option === services.length + 1) {
       return startBooking(client, jid, user);
@@ -188,7 +198,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
       return send(
         client,
         jid,
-        `Estas são as próximas datas disponíveis para *${service.name}*:\n\n${numbered(dates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}\n${dates.length + 1}️⃣ Voltar aos serviços`,
+        `Estas são as próximas datas disponíveis para *${service.name}*:\n\n${numbered(dates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}\n${emojiNumber(dates.length + 1)} Voltar aos serviços`,
         user.id
       );
     }
@@ -205,14 +215,14 @@ async function handleBookingStep(client, jid, text, normalized, user) {
     return send(
       client,
       jid,
-      `Escolha a profissional:\n\n1️⃣ Primeira disponível\n${professionals.map((item, index) => `${index + 2}️⃣ ${item.name}`).join('\n')}\n${professionals.length + 2}️⃣ Voltar aos serviços`,
+      `Escolha a profissional:\n\n1️⃣ Primeira disponível\n${professionals.map((item, index) => `${emojiNumber(index + 2)} ${item.name}`).join('\n')}\n${emojiNumber(professionals.length + 2)} Voltar aos serviços`,
       user.id
     );
   }
 
   if (user.onboarding_step === 'booking_professional') {
     const professionals = await appt.listProfessionals(data.serviceId);
-    const option = Number(normalized);
+    const option = parseOption(normalized);
 
     if (option === professionals.length + 2) {
       const services = await appt.listServices(data.categoryId);
@@ -223,7 +233,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
       return send(
         client,
         jid,
-        `Qual serviço você deseja?\n\n${numbered(services, (item) => item.name)}\n${services.length + 1}️⃣ Voltar às categorias`,
+        `Qual serviço você deseja?\n\n${numbered(services, (item) => item.name)}\n${emojiNumber(services.length + 1)} Voltar às categorias`,
         user.id
       );
     }
@@ -251,13 +261,13 @@ async function handleBookingStep(client, jid, text, normalized, user) {
     return send(
       client,
       jid,
-      `Datas disponíveis:\n\n${numbered(dates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}\n${dates.length + 1}️⃣ Voltar`,
+      `Datas disponíveis:\n\n${numbered(dates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}\n${emojiNumber(dates.length + 1)} Voltar`,
       user.id
     );
   }
 
   if (user.onboarding_step === 'booking_date') {
-    const option = Number(normalized);
+    const option = parseOption(normalized);
     const dates = data.dates || [];
 
     if (option === dates.length + 1) {
@@ -269,7 +279,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
       return send(
         client,
         jid,
-        `Escolha novamente o serviço:\n\n${numbered(services, (item) => item.name)}\n${services.length + 1}️⃣ Voltar às categorias`,
+        `Escolha novamente o serviço:\n\n${numbered(services, (item) => item.name)}\n${emojiNumber(services.length + 1)} Voltar às categorias`,
         user.id
       );
     }
@@ -279,24 +289,45 @@ async function handleBookingStep(client, jid, text, normalized, user) {
       return send(client, jid, 'Escolha uma das datas numeradas.', user.id);
     }
 
+    const freshSlots = await appt.availableSlots(data.serviceId, data.professionalId, chosen.date, user.id);
+    if (!freshSlots.length) {
+      const freshDates = await appt.nextDates(data.serviceId, data.professionalId);
+      await updateUser(user.id, {
+        onboarding_step: 'booking_date',
+        onboarding_data: { ...data, dates: freshDates, slots: undefined, selectedDate: undefined }
+      });
+      return send(
+        client,
+        jid,
+        `Os horários dessa data foram preenchidos. Estas são as próximas datas disponíveis:
+
+${numbered(freshDates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}`,
+        user.id
+      );
+    }
+
     await updateUser(user.id, {
       onboarding_step: 'booking_time',
-      onboarding_data: { ...data, selectedDate: chosen.date, slots: chosen.slots }
+      onboarding_data: { ...data, selectedDate: chosen.date, slots: freshSlots }
     });
 
     return send(
       client,
       jid,
-      `Horários disponíveis em ${dateBR(`${chosen.date}T12:00:00-03:00`)}:\n\n${numbered(chosen.slots, (slot) => timeBR(slot))}\n${chosen.slots.length + 1}️⃣ Escolher outra data`,
+      `Horários disponíveis em ${dateBR(`${chosen.date}T12:00:00-03:00`)}:
+
+${numbered(freshSlots, (slot) => timeBR(slot))}
+${emojiNumber(freshSlots.length + 1)} Escolher outra data`,
       user.id
     );
   }
 
   if (user.onboarding_step === 'booking_time') {
-    const option = Number(normalized);
+    const option = parseOption(normalized);
     const slots = data.slots || [];
 
     if (option === slots.length + 1) {
+      await appt.releaseHolds(user.id);
       const dates = await appt.nextDates(data.serviceId, data.professionalId);
       await updateUser(user.id, {
         onboarding_step: 'booking_date',
@@ -305,7 +336,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
       return send(
         client,
         jid,
-        `Escolha outra data:\n\n${numbered(dates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}\n${dates.length + 1}️⃣ Voltar aos serviços`,
+        `Escolha outra data:\n\n${numbered(dates, (item) => dateBR(`${item.date}T12:00:00-03:00`))}\n${emojiNumber(dates.length + 1)} Voltar aos serviços`,
         user.id
       );
     }
@@ -313,6 +344,47 @@ async function handleBookingStep(client, jid, text, normalized, user) {
     const slot = slots[option - 1];
     if (!slot) {
       return send(client, jid, 'Escolha um dos horários numerados.', user.id);
+    }
+
+    const freshSlots = await appt.availableSlots(data.serviceId, data.professionalId, data.selectedDate, user.id);
+    if (!freshSlots.includes(slot)) {
+      await updateUser(user.id, {
+        onboarding_step: 'booking_time',
+        onboarding_data: { ...data, slots: freshSlots, startsAt: undefined }
+      });
+      return send(
+        client,
+        jid,
+        `Esse horário não está mais disponível. Escolha uma das opções atualizadas:
+
+${numbered(freshSlots, (item) => timeBR(item))}
+${emojiNumber(freshSlots.length + 1)} Escolher outra data`,
+        user.id
+      );
+    }
+
+    try {
+      await appt.holdSlot({
+        clientId: user.id,
+        serviceId: data.serviceId,
+        professionalId: data.professionalId,
+        startsAt: slot
+      });
+    } catch (_) {
+      const updatedSlots = await appt.availableSlots(data.serviceId, data.professionalId, data.selectedDate, user.id);
+      await updateUser(user.id, {
+        onboarding_step: 'booking_time',
+        onboarding_data: { ...data, slots: updatedSlots, startsAt: undefined }
+      });
+      return send(
+        client,
+        jid,
+        `Esse horário acabou de ser reservado por outra pessoa. Escolha uma das opções atualizadas:
+
+${numbered(updatedSlots, (item) => timeBR(item))}
+${emojiNumber(updatedSlots.length + 1)} Escolher outra data`,
+        user.id
+      );
     }
 
     const service = await appt.getService(data.serviceId);
@@ -338,6 +410,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
 
   if (user.onboarding_step === 'booking_confirm') {
     if (normalized === '2') {
+      await appt.releaseHolds(user.id);
       const dates = await appt.nextDates(data.serviceId, data.professionalId);
       await updateUser(user.id, {
         onboarding_step: 'booking_date',
@@ -485,7 +558,7 @@ async function handleIncomingMessage(client, message) {
     const body = rows
       .map(
         (appointment, index) =>
-          `${index + 1}️⃣ *${appointment.service_name}*\n📅 ${dateBR(appointment.starts_at)}\n🕐 ${timeBR(appointment.starts_at)}\n👩 ${appointment.professional_name}\nCódigo: ${appointment.public_code}`
+          `${emojiNumber(index + 1)} *${appointment.service_name}*\n📅 ${dateBR(appointment.starts_at)}\n🕐 ${timeBR(appointment.starts_at)}\n👩 ${appointment.professional_name}\nCódigo: ${appointment.public_code}`
       )
       .join('\n\n');
     return send(
