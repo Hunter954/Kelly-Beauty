@@ -198,10 +198,19 @@ async function createAppointment(data) {
       (appointment_id,action,new_data,actor_type,actor_id)
       VALUES($1,'created',$2,$3,$4)`, [result.rows[0].id, JSON.stringify(result.rows[0]), data.origin || 'whatsapp', data.actor || 'client']);
 
+    // Calcule os lembretes no Node para que cada parâmetro chegue ao PostgreSQL
+    // explicitamente como timestamp. A expressão `$2 - INTERVAL ...` fazia o driver
+    // inferir `$2` como INTERVAL e tentava gravar um interval em scheduled_for.
+    const reminder30MinutesAt = new Date(start.getTime() - 30 * 60 * 1000);
+    const reminder10MinutesAt = new Date(start.getTime() - 10 * 60 * 1000);
     await client.query(`INSERT INTO reminder_jobs(appointment_id,reminder_key,scheduled_for)
-      VALUES($1,'30_minutes',$2-INTERVAL '30 minutes'),($1,'10_minutes',$2-INTERVAL '10 minutes')
+      VALUES($1,'30_minutes',$2::TIMESTAMPTZ),($1,'10_minutes',$3::TIMESTAMPTZ)
       ON CONFLICT(appointment_id,reminder_key) DO UPDATE
-      SET scheduled_for=EXCLUDED.scheduled_for,status='pending',sent_at=NULL,last_error=NULL`, [result.rows[0].id, start]);
+      SET scheduled_for=EXCLUDED.scheduled_for,status='pending',attempts=0,sent_at=NULL,last_error=NULL`, [
+      result.rows[0].id,
+      reminder30MinutesAt,
+      reminder10MinutesAt
+    ]);
 
     await client.query('DELETE FROM appointment_holds WHERE client_id=$1', [data.clientId]);
     await client.query('COMMIT');
