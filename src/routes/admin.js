@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const multer = require('multer');
 const storagePaths = require('../storage');
-const { getBotState, startBotInBackground, stopBot, cleanSessionArtifacts, sendText } = require('../bot');
+const { getBotState, startBotInBackground, stopBot, cleanSessionArtifacts, sendText, setChatArchived } = require('../bot');
 const { getPool, getDatabaseStatus, friendlyDatabaseError, query, logMessage, updateUser, formatPhoneForAdmin } = require('../db');
 const config = require('../config');
 const router = express.Router();
@@ -196,6 +196,7 @@ router.post('/support/:id/close', requireAuth, async (req, res, next) => {
       await logMessage({ userId: user.id, whatsappJid: user.whatsapp_jid, direction: 'out', body: closing });
     }
     await query(`UPDATE users SET support_status='closed',support_closed_at=NOW(),support_unread_count=0,onboarding_step='main_menu',lead_status=CASE WHEN payment_status='approved' THEN 'customer' ELSE 'engaged' END,updated_at=NOW() WHERE id=$1`, [user.id]);
+    await setChatArchived(user.whatsapp_jid, true);
     res.json({ ok: true });
   } catch (error) { next(error); }
 });
@@ -205,6 +206,7 @@ router.post('/support/:id/reopen', requireAuth, async (req, res, next) => {
     const user = (await query('SELECT * FROM users WHERE id=$1', [req.params.id])).rows[0];
     if (!user) return res.status(404).json({ error: 'Contato não encontrado.' });
     await query(`UPDATE users SET support_status='open',support_opened_at=NOW(),support_closed_at=NULL,onboarding_step='support',lead_status='support',support_last_message_at=NOW(),updated_at=NOW() WHERE id=$1`, [user.id]);
+    await setChatArchived(user.whatsapp_jid, false);
     res.json({ ok: true });
   } catch (error) { next(error); }
 });

@@ -77,12 +77,14 @@ async function openSupport(client, jid, user) {
     support_last_message_at: new Date(),
     lead_status: 'support'
   });
-  return send(
+  await send(
     client,
     jid,
     'Certo! Vou encaminhar sua conversa para nossa equipe. 💛\n\nAssim que possível, uma atendente continuará por aqui.',
     user.id
   );
+  if (client.setChatArchived) await client.setChatArchived(jid, false);
+  return true;
 }
 
 async function startBooking(client, jid, user) {

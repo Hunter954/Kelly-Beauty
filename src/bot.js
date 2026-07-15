@@ -10,6 +10,8 @@ let starting = false;
 let backgroundPromise = null;
 let baileysSocket = null;
 let baileysSaveCreds = null;
+const latestMessageByJid = new Map();
+const systemSentMessageIds = new Set();
 
 const state = {
   enabled: String(process.env.ENABLE_WHATSAPP || 'true') === 'true',
@@ -176,6 +178,8 @@ async function stopBot() {
     client = null;
     baileysSocket = null;
     baileysSaveCreds = null;
+    latestMessageByJid.clear();
+    systemSentMessageIds.clear();
     starting = false;
     backgroundPromise = null;
     state.ready = false;
@@ -315,6 +319,94 @@ function getMessageBody(message) {
   );
 }
 
+
+function phoneDigits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+async function findUserForAdminCommand(target) {
+  const digits = phoneDigits(target);
+  if (!digits) return null;
+  const variants = [digits];
+  if (digits.length >= 10 && !digits.startsWith('55')) variants.push(`55${digits}`);
+  if (digits.startsWith('55')) variants.push(digits.slice(2));
+  const result = await db.query(
+    `SELECT * FROM users
+     WHERE regexp_replace(COALESCE(phone,''), '\\D', '', 'g') = ANY($1::text[])
+        OR regexp_replace(COALESCE(whatsapp_jid,''), '\\D', '', 'g') = ANY($1::text[])
+     ORDER BY last_interaction_at DESC
+     LIMIT 1`,
+    [variants]
+  );
+  return result.rows[0] || null;
+}
+
+async function setSupportStateFromPhone(sock, command, selfJid) {
+  const match = String(command || '').trim().match(/^\/(suporte|atender|encerrar|finalizar)\s+([^\s]+)(?:\s+([\s\S]+))?$/i);
+  if (!match) return false;
+
+  const action = match[1].toLowerCase();
+  const target = match[2];
+  const optionalMessage = String(match[3] || '').trim();
+  const user = await findUserForAdminCommand(target);
+
+  if (!user?.whatsapp_jid) {
+    await sock.sendMessage(selfJid, { text: `Contato não encontrado para: ${target}. Use o número com DDD, por exemplo /suporte 45999999999.` });
+    return true;
+  }
+
+  if (['suporte', 'atender'].includes(action)) {
+    await db.updateUser(user.id, {
+      support_status: 'open',
+      support_opened_at: new Date(),
+      support_closed_at: null,
+      support_last_message_at: new Date(),
+      support_unread_count: 0,
+      onboarding_step: 'support',
+      lead_status: 'support'
+    });
+    await setChatArchived(user.whatsapp_jid, false);
+    await sock.sendMessage(selfJid, { text: `✅ Suporte humano ativado para ${user.name || user.phone || target}. O chat foi desarquivado e o bot está pausado para esse contato.` });
+    return true;
+  }
+
+  if (optionalMessage) {
+    await sendText(user.whatsapp_jid, optionalMessage);
+    await db.logMessage({ userId: user.id, whatsappJid: user.whatsapp_jid, direction: 'out', body: optionalMessage });
+  }
+  await db.updateUser(user.id, {
+    support_status: 'closed',
+    support_closed_at: new Date(),
+    support_unread_count: 0,
+    onboarding_step: 'main_menu',
+    lead_status: user.payment_status === 'approved' ? 'customer' : 'engaged'
+  });
+  await setChatArchived(user.whatsapp_jid, true);
+  await sock.sendMessage(selfJid, { text: `✅ Atendimento encerrado para ${user.name || user.phone || target}. O chat voltou para os arquivados e o bot foi liberado.` });
+  return true;
+}
+
+async function setChatArchived(jid, archived, lastMessage = null) {
+  if (!baileysSocket) return false;
+  const target = normalizeToBaileysJid(jid);
+  if (!target || target.endsWith('@g.us') || target === 'status@broadcast') return false;
+
+  const recent = lastMessage || latestMessageByJid.get(target);
+  const modification = archived
+    ? { archive: true, ...(recent ? { lastMessages: [recent] } : {}) }
+    : { archive: false };
+
+  try {
+    await baileysSocket.chatModify(modification, target);
+    return true;
+  } catch (error) {
+    // Algumas versões exigem a última mensagem para arquivar. Não derruba o bot
+    // caso o WhatsApp ainda não tenha sincronizado esse chat na sessão atual.
+    console.warn(`[WhatsApp] Não foi possível ${archived ? 'arquivar' : 'desarquivar'} ${target}: ${error.message}`);
+    return false;
+  }
+}
+
 async function startBaileys() {
   const qrcode = require('qrcode');
   const baileys = require('@whiskeysockets/baileys');
@@ -358,6 +450,10 @@ async function startBaileys() {
           `Timeout ao enviar resposta para ${target} depois de ${timeoutMs}ms`
         );
 
+        latestMessageByJid.set(target, result);
+        if (result?.key?.id) systemSentMessageIds.add(result.key.id);
+        const user = await db.getUserByJid(target).catch(() => null);
+        await setChatArchived(target, user?.support_status !== 'open', result);
         state.lastOutboundAt = new Date();
         state.lastOutboundTo = target;
         state.lastOutboundPreview = previewText(normalizedText);
@@ -370,6 +466,7 @@ async function startBaileys() {
         throw error;
       }
     },
+    setChatArchived: async (jid, archived, lastMessage) => setChatArchived(jid, archived, lastMessage),
     addParticipantToGroup: async (groupJid, participantJid) => {
       const group = String(groupJid || '').trim();
       if (!group.endsWith('@g.us')) throw new Error('REIVILO_GROUP_JID inválido. Ele deve terminar com @g.us.');
@@ -434,7 +531,31 @@ async function startBaileys() {
         const isGroup = String(from || '').endsWith('@g.us');
         const isStatus = String(from || '') === 'status@broadcast';
 
-        if (!from || fromMe || isGroup || isStatus) {
+        if (!from || isGroup || isStatus) continue;
+        latestMessageByJid.set(normalizeToBaileysJid(from), msg);
+
+        if (fromMe) {
+          const sentId = msg.key?.id;
+          if (sentId && systemSentMessageIds.delete(sentId)) continue;
+
+          const { jidNormalizedUser, areJidsSameUser } = baileys;
+          const selfJid = jidNormalizedUser(sock.user?.id || '');
+          const remote = jidNormalizedUser(from);
+          const isSelfChat = Boolean(selfJid && remote && areJidsSameUser(selfJid, remote));
+
+          if (isSelfChat && body) {
+            const handled = await setSupportStateFromPhone(sock, body, remote);
+            if (handled) continue;
+          }
+
+          // Mensagem digitada manualmente no celular para um cliente em suporte:
+          // registra no painel e mantém o chat desarquivado, sem acionar o bot.
+          const manualUser = await db.getUserByJid(from);
+          if (manualUser?.support_status === 'open' && body) {
+            await db.logMessage({ userId: manualUser.id, whatsappJid: from, direction: 'out', body, raw: msg });
+            await db.updateUser(manualUser.id, { support_last_message_at: new Date(), support_unread_count: 0 });
+            await setChatArchived(from, false, msg);
+          }
           continue;
         }
 
@@ -453,6 +574,9 @@ async function startBaileys() {
           raw: msg
         };
         await handleIncomingMessage(client, normalizedMessage);
+
+        const currentUser = await db.getUserByJid(from);
+        await setChatArchived(from, currentUser?.support_status !== 'open', msg);
       } catch (error) {
         console.error('Erro no fluxo do bot:', error);
       }
@@ -556,5 +680,6 @@ module.exports = {
   getBotClient,
   getBotState,
   sendText,
+  setChatArchived,
   addParticipantToGroup
 };
