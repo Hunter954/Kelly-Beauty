@@ -8,6 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 const db = require('./db');
 const storage = require('./storage');
+const { startReminderWorker } = require('./services/reminder-service');
 storage.ensureStorageDirectories();
 const { startBotInBackground, getBotState } = require('./bot');
 
@@ -154,6 +155,8 @@ async function runStartupTasks() {
     migrationsError = error;
     console.error('Falha nas migrations, mas o servidor continuará online para evitar 502:', error.message);
   }
+
+  startReminderWorker();
 
   const whatsappEnabled = toBool(process.env.ENABLE_WHATSAPP, true);
   const disableAutoStart = toBool(process.env.WA_DISABLE_AUTO_START, false);

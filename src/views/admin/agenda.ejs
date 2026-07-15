@@ -1,1 +1,58 @@
-<%- include('../partials/admin-header') %><header class="page-header"><div><h1>Agenda</h1><p>Visualização diária dos atendimentos.</p></div><form><input type="date" name="date" value="<%= date %>" onchange="this.form.submit()"></form></header><section class="panel"><% if(!rows.length){ %><div class="empty-state"><i class="bi bi-calendar2-heart"></i><strong>Agenda livre neste dia</strong><span>Os novos agendamentos aparecerão aqui.</span></div><% }else{ %><table><thead><tr><th>Horário</th><th>Cliente</th><th>Serviço</th><th>Profissional</th><th>Status</th><th>Ações</th></tr></thead><tbody><% rows.forEach(a=>{ %><tr><td><strong><%= new Date(a.starts_at).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'}) %></strong></td><td><%= a.client_name %><br><small><%= formatPhone(a) %></small></td><td><%= a.service_name %></td><td><%= a.professional_name %></td><td><span class="pill"><%= a.status %></span></td><td><form method="post" action="/admin/appointments/<%= a.id %>/status"><input type="hidden" name="returnTo" value="/admin/agenda?date=<%= date %>"><select name="status"><option value="confirmed">Confirmado</option><option value="in_progress">Em atendimento</option><option value="completed">Concluído</option><option value="no_show">Não compareceu</option><option value="cancelled_by_business">Cancelar</option></select><button>Atualizar</button></form></td></tr><% }) %></tbody></table><% } %></section><%- include('../partials/admin-footer') %>
+<%- include('../partials/admin-header') %>
+<header class="page-header agenda-heading">
+  <div>
+    <span class="eyebrow">Organização do dia</span>
+    <h1>Agenda</h1>
+    <p>Visualize atendimentos, filtre rapidamente e atualize cada etapa sem poluir a tela.</p>
+  </div>
+  <div class="agenda-date-actions">
+    <a class="button secondary compact" href="/admin/agenda?date=<%= new Date(new Date(date+'T12:00:00').getTime()-86400000).toISOString().slice(0,10) %>"><i class="bi bi-chevron-left"></i></a>
+    <form class="date-picker-form"><input type="date" name="date" value="<%= date %>" onchange="this.form.submit()"></form>
+    <a class="button secondary compact" href="/admin/agenda?date=<%= new Date(new Date(date+'T12:00:00').getTime()+86400000).toISOString().slice(0,10) %>"><i class="bi bi-chevron-right"></i></a>
+  </div>
+</header>
+
+<section class="agenda-summary">
+  <article><span>Total</span><strong><%= summary.total %></strong><small>atendimentos no dia</small></article>
+  <article><span>Confirmados</span><strong><%= summary.active %></strong><small>aguardando ou em agenda</small></article>
+  <article><span>Concluídos</span><strong><%= summary.completed %></strong><small>atendimentos finalizados</small></article>
+  <article><span>Cancelados</span><strong><%= summary.cancelled %></strong><small>horários liberados</small></article>
+</section>
+
+<section class="panel agenda-filter-panel">
+  <form class="agenda-filters" method="get">
+    <input type="hidden" name="date" value="<%= date %>">
+    <label><span>Buscar</span><div class="input-icon"><i class="bi bi-search"></i><input name="q" value="<%= search %>" placeholder="Cliente, telefone ou serviço"></div></label>
+    <label><span>Serviço</span><select name="service"><option value="">Todos</option><% services.forEach(item=>{ %><option value="<%= item.id %>" <%= String(serviceId)===String(item.id)?'selected':'' %>><%= item.name %></option><% }) %></select></label>
+    <label><span>Profissional</span><select name="professional"><option value="">Todas</option><% professionals.forEach(item=>{ %><option value="<%= item.id %>" <%= String(professionalId)===String(item.id)?'selected':'' %>><%= item.name %></option><% }) %></select></label>
+    <label><span>Status</span><select name="status"><option value="">Todos</option><option value="confirmed" <%= status==='confirmed'?'selected':'' %>>Confirmado</option><option value="in_progress" <%= status==='in_progress'?'selected':'' %>>Em atendimento</option><option value="completed" <%= status==='completed'?'selected':'' %>>Concluído</option><option value="no_show" <%= status==='no_show'?'selected':'' %>>Não compareceu</option><option value="cancelled_by_business" <%= status==='cancelled_by_business'?'selected':'' %>>Cancelado</option></select></label>
+    <div class="filter-actions"><button class="primary compact" type="submit"><i class="bi bi-funnel"></i> Filtrar</button><a href="/admin/agenda?date=<%= date %>" class="button secondary compact">Limpar</a></div>
+  </form>
+</section>
+
+<section class="agenda-list">
+<% const labels={pending:'Pendente',confirmed:'Confirmado',rescheduled:'Reagendado',in_progress:'Em atendimento',completed:'Concluído',no_show:'Não compareceu',cancelled_by_client:'Cancelado pela cliente',cancelled_by_business:'Cancelado pelo estúdio'}; %>
+<% if(!rows.length){ %>
+  <div class="panel empty-state agenda-empty"><i class="bi bi-calendar2-heart"></i><strong>Nenhum atendimento encontrado</strong><span>Ajuste os filtros ou selecione outra data.</span></div>
+<% }else{ rows.forEach(a=>{ const hour=new Date(a.starts_at).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'}); %>
+  <article class="appointment-card status-<%= a.status %>">
+    <div class="appointment-time"><strong><%= hour %></strong><span><%= a.duration_minutes %> min</span></div>
+    <div class="appointment-main">
+      <div class="appointment-title-row"><div><h3><%= a.client_name || 'Cliente sem nome' %></h3><a href="https://wa.me/<%= String(a.phone||'').replace(/\D/g,'') %>" target="_blank" rel="noopener"><i class="bi bi-whatsapp"></i> <%= formatPhone(a) %></a></div><span class="appointment-status"><%= labels[a.status]||a.status %></span></div>
+      <div class="appointment-meta"><span><i class="bi bi-stars"></i><%= a.service_name %></span><span><i class="bi bi-person-badge"></i><%= a.professional_name %></span><span><i class="bi bi-clock-history"></i>até <%= new Date(a.ends_at).toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo',hour:'2-digit',minute:'2-digit'}) %></span></div>
+    </div>
+    <form class="appointment-action-form" method="post" action="/admin/appointments/<%= a.id %>/status">
+      <input type="hidden" name="returnTo" value="/admin/agenda?date=<%= date %>&status=<%= status %>&service=<%= serviceId %>&professional=<%= professionalId %>&q=<%= encodeURIComponent(search) %>">
+      <select name="status" aria-label="Novo status">
+        <option value="confirmed" <%= a.status==='confirmed'?'selected':'' %>>Confirmado</option>
+        <option value="in_progress" <%= a.status==='in_progress'?'selected':'' %>>Em atendimento</option>
+        <option value="completed" <%= a.status==='completed'?'selected':'' %>>Concluído</option>
+        <option value="no_show" <%= a.status==='no_show'?'selected':'' %>>Não compareceu</option>
+        <option value="cancelled_by_business" <%= a.status==='cancelled_by_business'?'selected':'' %>>Cancelar pelo estúdio</option>
+      </select>
+      <button class="primary compact" type="submit"><i class="bi bi-check2"></i> Atualizar</button>
+    </form>
+  </article>
+<% }) } %>
+</section>
+<%- include('../partials/admin-footer') %>

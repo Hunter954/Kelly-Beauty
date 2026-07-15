@@ -25,6 +25,8 @@ router.use(async (req, res, next) => {
   try {
     const ready = await config.isSetupComplete();
     res.locals.setupComplete = ready;
+    res.locals.brandLogoUrl = await config.get('business_logo_url', '');
+    res.locals.businessName = await config.get('business_name', 'Kelly Beauty');
     if (!ready && !['/setup'].includes(req.path)) return res.redirect('/admin/setup');
     if (ready && req.path === '/setup' && req.method === 'GET') return res.redirect('/admin/login');
     next();

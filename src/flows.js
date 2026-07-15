@@ -9,10 +9,19 @@ async function send(client, jid, text, userId) {
   await logMessage({ userId, whatsappJid: jid, direction: 'out', body });
 }
 
-async function menu() {
-  return config.get(
+const masculineNames = new Set([
+  'william','joao','jose','carlos','paulo','pedro','lucas','gabriel','rafael','marcos','marco','mateus','matheus','bruno','daniel','diego','eduardo','felipe','fernando','gustavo','henrique','igor','leandro','leonardo','luiz','luis','marcelo','murilo','nicolas','renato','ricardo','roberto','rodrigo','samuel','thiago','tiago','vinicius','vitor','victor','wesley','anderson','alexandre','antonio','fabio','fabricio','jorge','julio','mauricio','otavio','sergio'
+]);
+
+function welcomeExpression(name) {
+  const first = normalizeText(String(name || '').split(/\s+/)[0]);
+  return masculineNames.has(first) ? 'seja bem-vindo' : 'seja bem-vinda';
+}
+
+async function menu(name) {
+  const saved = await config.get(
     'welcome_message',
-    'Olá, seja bem-vinda à Kelly Rodrigues Beauty Studio! ✨\n\n' +
+    'Olá, seja bem-vindo(a) à Kelly Rodrigues Beauty Studio! ✨\n\n' +
       'Como podemos cuidar de você hoje?\n\n' +
       '1️⃣ Agendar um serviço\n' +
       '2️⃣ Ver nossos serviços\n' +
@@ -22,6 +31,11 @@ async function menu() {
       '6️⃣ Falar com uma atendente\n\n' +
       'Digite o número da opção desejada.'
   );
+  const expression = welcomeExpression(name);
+  return String(saved)
+    .replace(/seja bem-vindo\(a\)/gi, expression)
+    .replace(/seja bem-vinda/gi, expression)
+    .replace(/seja bem-vindo/gi, expression);
 }
 
 function numbered(items, label) {
@@ -85,7 +99,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
 
   if (normalized === 'menu' || normalized === 'inicio' || normalized === 'cancelar agendamento') {
     await reset(user);
-    return send(client, jid, await menu(), user.id);
+    return send(client, jid, await menu(user.name), user.id);
   }
 
   if (user.onboarding_step === 'booking_category') {
@@ -94,7 +108,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
 
     if (option === categories.length + 1) {
       await reset(user);
-      return send(client, jid, await menu(), user.id);
+      return send(client, jid, await menu(user.name), user.id);
     }
 
     const category = categories[option - 1];
@@ -339,7 +353,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
 
     if (normalized === '3') {
       await reset(user);
-      return send(client, jid, await menu(), user.id);
+      return send(client, jid, await menu(user.name), user.id);
     }
 
     if (normalized !== '1') {
@@ -379,7 +393,7 @@ async function handleBookingStep(client, jid, text, normalized, user) {
   }
 
   await reset(user);
-  return send(client, jid, await menu(), user.id);
+  return send(client, jid, await menu(user.name), user.id);
 }
 
 async function handleIncomingMessage(client, message) {
@@ -418,7 +432,7 @@ async function handleIncomingMessage(client, message) {
 
   if (['menu', 'inicio', 'comecar'].includes(normalized)) {
     await reset(user);
-    return send(client, jid, await menu(), user.id);
+    return send(client, jid, await menu(user.name), user.id);
   }
 
   if (!user.name && user.onboarding_step !== 'ask_name') {
@@ -432,7 +446,7 @@ async function handleIncomingMessage(client, message) {
       return send(client, jid, 'Pode me informar seu nome, por favor? 😊', user.id);
     }
     user = await updateUser(user.id, { name, onboarding_step: 'main_menu', onboarding_data: {} });
-    return send(client, jid, `Prazer, ${name}! ✨\n\n${await menu()}`, user.id);
+    return send(client, jid, `Prazer, ${name}! ✨\n\n${await menu(name)}`, user.id);
   }
 
   // Durante o agendamento, números pertencem à etapa atual e nunca ao menu principal.
@@ -442,7 +456,7 @@ async function handleIncomingMessage(client, message) {
 
   if (!text || ['oi', 'ola'].includes(normalized)) {
     await reset(user);
-    return send(client, jid, await menu(), user.id);
+    return send(client, jid, await menu(user.name), user.id);
   }
 
   if (normalized === '1' || normalized.includes('agendar') || normalized.includes('marcar horario')) {
@@ -504,7 +518,7 @@ async function handleIncomingMessage(client, message) {
     return openSupport(client, jid, user);
   }
 
-  return send(client, jid, await menu(), user.id);
+  return send(client, jid, await menu(user.name), user.id);
 }
 
 module.exports = { handleIncomingMessage };
