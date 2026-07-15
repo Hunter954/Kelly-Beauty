@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — Kelly Rodrigues Beauty Studio</title>
+  <link rel="stylesheet" href="/public/admin.css">
+</head>
+<body class="login-page">
+  <section class="login-card">
+    <h1>Kelly Rodrigues Beauty Studio</h1>
+    <p>Painel administrativo da estúdio de beleza</p>
+    <% if (error) { %><div class="alert"><%= error %></div><% } %>
+    <form method="post" action="/admin/login">
+      <label>Usuário</label>
+      <input type="text" name="username" required autofocus>
+      <label>Senha</label>
+      <input type="password" name="password" required>
+      <button type="submit">Entrar</button>
+    </form>
+  </section>
+</body>
+</html>

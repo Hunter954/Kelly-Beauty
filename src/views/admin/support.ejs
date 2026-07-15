@@ -1,0 +1,212 @@
+<%- include('../partials/admin-header') %>
+<header class="page-header support-page-header">
+  <div>
+    <h1>Central de atendimento</h1>
+    <p>Conversas em tempo real com os contatos que solicitaram suporte.</p>
+  </div>
+  <span class="status <%= botReady ? 'ok' : 'warn' %>" id="waStatus"><i class="bi <%= botReady ? 'bi-whatsapp' : 'bi-exclamation-circle' %>"></i>&nbsp; <%= botReady ? 'WhatsApp conectado' : 'WhatsApp desconectado' %></span>
+</header>
+
+<section class="support-shell" data-selected-id="<%= selected?.id || '' %>">
+  <aside class="support-sidebar">
+    <div class="support-sidebar-head">
+      <div><span class="eyebrow">Atendimentos</span><strong>Conversas</strong></div>
+      <span class="support-count" id="supportCount"><%= conversations.length %></span>
+    </div>
+    <div class="support-search-wrap"><i class="bi bi-search"></i><input id="contactSearch" placeholder="Buscar nome ou telefone..." autocomplete="off"></div>
+    <div class="support-filter-tabs">
+      <button type="button" class="support-filter active" data-filter="all">Todos</button>
+      <button type="button" class="support-filter" data-filter="open">Abertos</button>
+      <button type="button" class="support-filter" data-filter="closed">Encerrados</button>
+    </div>
+    <div id="conversationList" class="conversation-list"></div>
+  </aside>
+
+  <section class="support-chat" id="supportChatPane">
+    <div id="chatEmpty" class="no-chat <%= selected ? 'hidden' : '' %>">
+      <div class="no-chat-icon"><i class="bi bi-chat-square-text"></i></div>
+      <strong>Selecione um atendimento</strong>
+      <span>Escolha um contato para visualizar e responder a conversa.</span>
+    </div>
+
+    <div id="chatContent" class="chat-content <%= selected ? '' : 'hidden' %>">
+      <header class="chat-header">
+        <div class="chat-person">
+          <span class="avatar" id="chatAvatar"><%= selected ? (selected.name || formatPhone(selected) || '?').charAt(0).toUpperCase() : '?' %></span>
+          <div><strong id="chatName"><%= selected ? (selected.name || formatPhone(selected)) : '' %></strong><small><span id="chatPhone"><%= selected ? formatPhone(selected) : '' %></span> · <span id="supportState"><%= selected?.support_status==='open' ? 'Atendimento aberto' : 'Atendimento encerrado' %></span></small></div>
+        </div>
+        <div class="chat-actions">
+          <button type="button" id="detailsToggle" class="icon-button secondary" title="Abrir detalhes"><i class="bi bi-info-circle"></i></button>
+          <button type="button" id="deleteButton" class="icon-button danger-outline" title="Excluir conversa"><i class="bi bi-trash3"></i></button>
+          <button type="button" id="reopenButton" class="secondary <%= selected?.support_status==='open' ? 'hidden' : '' %>"><i class="bi bi-arrow-counterclockwise"></i> Reabrir</button>
+          <button type="button" id="closeButton" class="danger <%= selected?.support_status==='open' ? '' : 'hidden' %>"><i class="bi bi-check2-circle"></i> Encerrar</button>
+        </div>
+      </header>
+      <div id="messageArea" class="message-area">
+        <% (messages || []).forEach(m => { %>
+          <div class="message-row <%= m.direction==='out' ? 'out' : 'in' %>" data-message-id="<%= m.id %>"><div class="message-bubble"><div><%= m.body || '[mensagem sem texto]' %></div><small><%= new Date(m.created_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) %></small></div></div>
+        <% }) %>
+      </div>
+      <form id="replyForm" class="chat-compose <%= selected?.support_status==='open' ? '' : 'disabled' %>">
+        <textarea id="replyMessage" rows="1" placeholder="<%= selected?.support_status==='open' ? 'Digite uma mensagem...' : 'Atendimento encerrado. Reabra para responder.' %>" <%= selected?.support_status==='open' ? '' : 'disabled' %>></textarea>
+        <button class="send-message-button" id="sendButton" title="Enviar" <%= selected?.support_status==='open' ? '' : 'disabled' %>><i class="bi bi-send-fill"></i></button>
+      </form>
+    </div>
+  </section>
+
+  <aside class="support-details" id="supportDetails">
+    <div class="details-toolbar"><strong>Detalhes</strong><button type="button" id="detailsClose" class="icon-button secondary" title="Fechar detalhes"><i class="bi bi-x-lg"></i></button></div>
+    <div class="details-empty <%= selected ? 'hidden' : '' %>" id="detailsEmpty">Selecione um contato.</div>
+    <div id="detailsContent" class="<%= selected ? '' : 'hidden' %>">
+      <div class="details-profile"><span class="avatar large" id="detailsAvatar"><%= selected ? (selected.name || formatPhone(selected) || '?').charAt(0).toUpperCase() : '?' %></span><strong id="detailsName"><%= selected ? (selected.name || formatPhone(selected)) : '' %></strong><span id="detailsPhone"><%= selected ? formatPhone(selected) : '' %></span><span class="details-status <%= selected?.support_status==='open' ? 'open' : 'closed' %>" id="detailsStatus"><%= selected?.support_status==='open' ? 'Atendimento aberto' : 'Atendimento encerrado' %></span></div>
+      <div class="details-card"><span>Origem</span><strong><i class="bi bi-whatsapp"></i> WhatsApp Kelly Beauty</strong></div>
+      <div class="details-card"><span>Regra do bot</span><strong id="botRule"><%= selected?.support_status==='open' ? 'Pausado durante o atendimento' : 'Menu automático liberado' %></strong></div>
+      <div class="details-note">Enquanto o atendimento estiver aberto, o menu automático fica pausado. Ele volta somente após o encerramento.</div>
+      <button type="button" id="deleteDetailsButton" class="delete-chat-full"><i class="bi bi-trash3"></i> Excluir esta conversa</button>
+    </div>
+  </aside>
+</section>
+
+<script>
+(() => {
+  const initialConversations = <%- JSON.stringify(conversations.map(u => ({...u, display_phone: formatPhone(u)}))) %>;
+  const shell = document.querySelector('.support-shell');
+  const list = document.getElementById('conversationList');
+  const area = document.getElementById('messageArea');
+  const form = document.getElementById('replyForm');
+  const textarea = document.getElementById('replyMessage');
+  const closeButton = document.getElementById('closeButton');
+  const reopenButton = document.getElementById('reopenButton');
+  const deleteButton = document.getElementById('deleteButton');
+  const deleteDetailsButton = document.getElementById('deleteDetailsButton');
+  let conversations = initialConversations;
+  let activeUserId = Number(shell.dataset.selectedId || 0);
+  let lastIds = new Set(Array.from(area.querySelectorAll('[data-message-id]')).map(el => String(el.dataset.messageId)));
+  let supportOpen = <%= selected?.support_status === 'open' ? 'true' : 'false' %>;
+  let activeFilter = 'all';
+  let loadingConversation = false;
+
+  const escapeHtml = value => String(value || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  const phoneOrName = user => user.name || user.display_phone || user.phone || 'Contato';
+  const formatTime = value => value ? new Date(value).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : '';
+  const scrollBottom = () => { area.scrollTop = area.scrollHeight; };
+
+  function renderConversations() {
+    const q = document.getElementById('contactSearch').value.toLowerCase().trim();
+    const visible = conversations.filter(user => {
+      const search = `${user.name || ''} ${user.display_phone || user.phone || ''}`.toLowerCase();
+      const status = user.support_status || 'closed';
+      return search.includes(q) && (activeFilter === 'all' || status === activeFilter);
+    });
+    document.getElementById('supportCount').textContent = conversations.length;
+    if (!visible.length) {
+      list.innerHTML = '<div class="empty-state"><i class="bi bi-chat-left-text"></i><span>Nenhum atendimento encontrado.</span></div>';
+      return;
+    }
+    list.innerHTML = visible.map(user => {
+      const name = phoneOrName(user);
+      const unread = Number(user.support_unread_count || 0);
+      const active = Number(user.id) === activeUserId;
+      const last = escapeHtml((user.last_message || 'Atendimento solicitado').slice(0,58));
+      return `<button type="button" class="conversation-item ${active ? 'active' : ''}" data-user-id="${user.id}" data-status="${user.support_status || 'closed'}"><span class="avatar">${escapeHtml(name.charAt(0).toUpperCase())}</span><span class="conversation-summary"><span class="conversation-top"><strong>${escapeHtml(name)}</strong><small>${formatTime(user.support_last_message_at || user.support_requested_at || user.last_interaction_at)}</small></span><span class="conversation-bottom"><span>${user.last_direction === 'out' ? 'Você: ' : ''}${last}</span>${unread && !active ? `<b class="unread">${unread}</b>` : ''}</span></span></button>`;
+    }).join('');
+  }
+
+  function updateProfile(user) {
+    const name = phoneOrName(user), phone = user.display_phone || user.phone || '', initial = name.charAt(0).toUpperCase();
+    ['chatAvatar','detailsAvatar'].forEach(id => document.getElementById(id).textContent = initial);
+    ['chatName','detailsName'].forEach(id => document.getElementById(id).textContent = name);
+    document.getElementById('chatPhone').textContent = phone;
+    document.getElementById('detailsPhone').textContent = phone;
+    document.getElementById('chatEmpty').classList.add('hidden');
+    document.getElementById('chatContent').classList.remove('hidden');
+    document.getElementById('detailsEmpty').classList.add('hidden');
+    document.getElementById('detailsContent').classList.remove('hidden');
+  }
+
+  function addMessage(message) {
+    if (lastIds.has(String(message.id))) return;
+    lastIds.add(String(message.id));
+    const date = new Date(message.created_at);
+    area.insertAdjacentHTML('beforeend', `<div class="message-row ${message.direction === 'out' ? 'out' : 'in'}" data-message-id="${message.id}"><div class="message-bubble"><div>${escapeHtml(message.body || '[mensagem sem texto]').replace(/\n/g,'<br>')}</div><small>${date.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</small></div></div>`);
+  }
+
+  function setOpen(open) {
+    supportOpen = open;
+    document.getElementById('supportState').textContent = open ? 'Atendimento aberto' : 'Atendimento encerrado';
+    document.getElementById('detailsStatus').textContent = open ? 'Atendimento aberto' : 'Atendimento encerrado';
+    document.getElementById('detailsStatus').className = `details-status ${open ? 'open' : 'closed'}`;
+    document.getElementById('botRule').textContent = open ? 'Pausado durante o atendimento' : 'Menu automático liberado';
+    closeButton.classList.toggle('hidden', !open); reopenButton.classList.toggle('hidden', open);
+    textarea.disabled = !open; document.getElementById('sendButton').disabled = !open;
+    textarea.placeholder = open ? 'Digite uma mensagem...' : 'Atendimento encerrado. Reabra para responder.';
+    form.classList.toggle('disabled', !open);
+  }
+
+  async function loadConversation(userId, pushState = true) {
+    if (loadingConversation) return;
+    loadingConversation = true; activeUserId = Number(userId); renderConversations();
+    try {
+      const response = await fetch(`/admin/support/api/${activeUserId}/messages`, {headers:{Accept:'application/json'}, cache:'no-store'});
+      if (!response.ok) return;
+      const data = await response.json(); area.innerHTML = ''; lastIds = new Set(); updateProfile(data.user);
+      data.messages.forEach(addMessage); setOpen(data.user.support_status === 'open');
+      const current = conversations.find(user => Number(user.id) === activeUserId); if (current) current.support_unread_count = 0;
+      renderConversations(); scrollBottom(); if (pushState) history.replaceState({}, '', `/admin/support?user=${activeUserId}`);
+    } finally { loadingConversation = false; }
+  }
+
+  async function refreshMessages() {
+    if (!activeUserId || loadingConversation) return;
+    try {
+      const nearBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 100;
+      const response = await fetch(`/admin/support/api/${activeUserId}/messages`, {headers:{Accept:'application/json'}, cache:'no-store'});
+      if (!response.ok) return;
+      const data = await response.json(); data.messages.forEach(addMessage); setOpen(data.user.support_status === 'open'); if (nearBottom) scrollBottom();
+    } catch (_) {}
+  }
+
+  async function refreshConversationList() {
+    try {
+      const response = await fetch('/admin/support/api/conversations', {headers:{Accept:'application/json'}, cache:'no-store'});
+      if (!response.ok) return;
+      conversations = await response.json();
+      const current = conversations.find(user => Number(user.id) === activeUserId); if (current) current.support_unread_count = 0;
+      renderConversations();
+      if (!activeUserId && conversations.length) loadConversation(conversations[0].id);
+    } catch (_) {}
+  }
+
+  async function deleteConversation() {
+    if (!activeUserId) return;
+    if (!confirm('Excluir todo o histórico deste atendimento? O contato continuará cadastrado, mas a conversa será removida.')) return;
+    const response = await fetch(`/admin/support/${activeUserId}/delete`, {method:'POST',headers:{Accept:'application/json'}});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(data.error || 'Não foi possível excluir a conversa.');
+    conversations = conversations.filter(user => Number(user.id) !== activeUserId); activeUserId = 0; area.innerHTML = ''; lastIds = new Set();
+    document.getElementById('chatContent').classList.add('hidden'); document.getElementById('chatEmpty').classList.remove('hidden'); shell.classList.remove('details-open');
+    renderConversations(); history.replaceState({}, '', '/admin/support');
+    if (conversations.length) loadConversation(conversations[0].id);
+  }
+
+  list.addEventListener('click', event => { const item = event.target.closest('.conversation-item'); if (item) loadConversation(item.dataset.userId); });
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); const message = textarea.value.trim(); if (!message || !supportOpen || !activeUserId) return;
+    const button = document.getElementById('sendButton'); button.disabled = true;
+    try { const response = await fetch(`/admin/support/${activeUserId}/reply`, {method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({message})}); const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Erro ao enviar.'); textarea.value=''; await Promise.all([refreshMessages(), refreshConversationList()]); }
+    catch (error) { alert(error.message); } finally { button.disabled = false; textarea.focus(); }
+  });
+  textarea.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); form.requestSubmit(); } });
+  closeButton.addEventListener('click', async () => { if (!activeUserId) return; const message = prompt('Mensagem de encerramento:', 'Atendimento encerrado. Sempre que precisar, envie MENU para voltar às opções da Kelly Beauty.'); if (message === null) return; const response = await fetch(`/admin/support/${activeUserId}/close`, {method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({message})}); if (!response.ok) return alert('Não foi possível encerrar.'); await Promise.all([refreshMessages(), refreshConversationList()]); });
+  reopenButton.addEventListener('click', async () => { if (!activeUserId) return; const response = await fetch(`/admin/support/${activeUserId}/reopen`, {method:'POST',headers:{Accept:'application/json'}}); if (!response.ok) return alert('Não foi possível reabrir.'); setOpen(true); await refreshConversationList(); textarea.focus(); });
+  deleteButton.addEventListener('click', deleteConversation); deleteDetailsButton.addEventListener('click', deleteConversation);
+  document.getElementById('detailsToggle').addEventListener('click', () => shell.classList.toggle('details-open'));
+  document.getElementById('detailsClose').addEventListener('click', () => shell.classList.remove('details-open'));
+  document.getElementById('contactSearch').addEventListener('input', renderConversations);
+  document.querySelectorAll('.support-filter').forEach(button => button.addEventListener('click', () => { activeFilter = button.dataset.filter; document.querySelectorAll('.support-filter').forEach(item => item.classList.toggle('active', item === button)); renderConversations(); }));
+
+  renderConversations(); scrollBottom();
+  setInterval(() => { refreshConversationList(); refreshMessages(); }, 2000);
+})();
+</script>
+<%- include('../partials/admin-footer') %>

@@ -1,0 +1,30 @@
+{
+  "name": "kelly-beauty-whatsapp",
+  "version": "3.0.0",
+  "description": "Automação de WhatsApp e gestão de agendamentos da Kelly Rodrigues Beauty Studio.",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "db:init": "node src/scripts/init-db.js"
+  },
+  "dependencies": {
+    "connect-pg-simple": "^9.0.1",
+    "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "helmet": "^7.2.0",
+    "pg": "^8.13.1",
+    "@whiskeysockets/baileys": "6.7.23",
+    "@hapi/boom": "10.0.1",
+    "qrcode": "1.5.4",
+    "pino": "^9.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

@@ -1,0 +1,57 @@
+<%- include('../partials/admin-header') %>
+<header class="page-header">
+  <div>
+    <h1>Conectar WhatsApp</h1>
+    <p>Abra o WhatsApp comercial, vá em aparelhos conectados e leia o QR Code.</p>
+  </div>
+  <div class="actions">
+    <form method="post" action="/admin/bot/start">
+      <button class="primary">Gerar/Iniciar</button>
+    </form>
+    <form method="post" action="/admin/bot/restart-clean" onsubmit="return confirm('Isso limpa a sessão salva do WhatsApp e gera um novo QR. Continuar?')">
+      <button>Limpar sessão e gerar novo QR</button>
+    </form>
+    <form method="post" action="/admin/bot/stop">
+      <button>Parar</button>
+    </form>
+  </div>
+</header>
+
+<section class="panel centered">
+  <div class="status <%= bot.ready ? 'ok' : 'warn' %>"><%= bot.status %></div>
+  <p>Motor atual: <strong>Baileys puro</strong></p>
+  <p>Sessão salva em: <strong><%= bot.authStore || 'arquivo local' %></strong></p>
+  <p>Tentativas de inicialização: <strong><%= bot.launchAttempts || 0 %></strong></p>
+  <% if (bot.lastInboundAt) { %>
+    <p>Última mensagem recebida: <strong><%= bot.lastInboundPreview %></strong><br><span class="muted"><%= bot.lastInboundFrom %> em <%= new Date(bot.lastInboundAt).toLocaleString('pt-BR') %></span></p>
+  <% } %>
+  <% if (bot.lastOutboundAt) { %>
+    <p>Última resposta enviada: <strong><%= bot.lastOutboundPreview || 'resposta enviada' %></strong><br><span class="muted"><%= bot.lastOutboundTo || '' %> em <%= new Date(bot.lastOutboundAt).toLocaleString('pt-BR') %></span></p>
+  <% } %>
+  <% if (bot.lastOutboundError) { %>
+    <p class="error">Erro no último envio: <%= bot.lastOutboundError %></p>
+  <% } %>
+
+  <% if (bot.qr) { %>
+    <img class="qr" src="<%= bot.qr %>" alt="QR Code WhatsApp">
+    <p>Depois de ler o QR, mantenha o celular conectado por alguns minutos para salvar a sessão. Nesta versão, a sessão é salva no PostgreSQL por padrão para sobreviver aos redeploys.</p>
+  <% } else if (bot.ready) { %>
+    <h2>✅ WhatsApp conectado</h2>
+    <p>O bot já está pronto para receber mensagens.</p>
+  <% } else if (bot.starting) { %>
+    <h2>Inicializando WhatsApp</h2>
+    <p>Atualize esta página em alguns segundos. O QR aparece aqui assim que o WhatsApp liberar.</p>
+  <% } else { %>
+    <h2>QR ainda não disponível</h2>
+    <p>O WhatsApp inicia automaticamente em segundo plano. Se o QR não aparecer, clique em “Gerar/Iniciar”. Depois de aparecer “WhatsApp conectado”, envie <strong>olá</strong> para testar.</p>
+  <% } %>
+
+  <% if (bot.lastError) { %>
+    <pre class="error"><%= bot.lastError %></pre>
+    <p class="muted">Esta versão não usa OpenWA, Chromium nem Puppeteer. Se aparecer OpenWA nos logs, o Railway ainda está rodando um deploy antigo.</p>
+  <% } %>
+</section>
+<script>
+  setTimeout(() => window.location.reload(), 8000);
+</script>
+<%- include('../partials/admin-footer') %>
